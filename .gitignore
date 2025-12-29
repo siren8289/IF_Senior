@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Model
+*.pkl
+*.pt
+*.h5
+
+# Data cache
+embeddings/
+04_result/*.csv
+
+# OS
+.DS_Store
