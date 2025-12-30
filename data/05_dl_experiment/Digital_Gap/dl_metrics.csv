@@ -1,0 +1,2 @@
+model,accuracy,f1_weighted
+MLPClassifier,0.5,0.49338624338624343
