@@ -4,6 +4,7 @@ from fastapi.openapi.utils import get_openapi
 import uvicorn
 import logging
 
+<<<<<<< HEAD
 from api.v1 import health as health_router
 from config.settings import Settings
 from models.loader import load_models
@@ -18,11 +19,20 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="IF(이프) API",
     description="AI 기반 매칭 점수 계산 API",
+=======
+# API 라우터 import
+from api.v1 import health, job_risk, matching
+
+app = FastAPI(
+    title="IF(이프) API",
+    description="건강 점수, 산업재해 리스크, 매칭 점수 계산 API",
+>>>>>>> main
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
 
+<<<<<<< HEAD
 # CORS 설정 (Backend 연동)
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +61,23 @@ async def health_check():
         "service": "ml-service",
         "version": "1.0.0"
     }
+=======
+# API 라우터 등록
+app.include_router(health.router)
+app.include_router(job_risk.router)
+app.include_router(matching.router)
+
+# OpenAPI 스키마 로드
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+swagger_path = os.path.join(BASE_DIR, "openApi", "v1", "swagger.yaml")
+
+try:
+    with open(swagger_path, "r", encoding="utf-8") as f:
+        openapi_schema = yaml.safe_load(f)
+    app.openapi_schema = openapi_schema
+except FileNotFoundError:
+    pass  # swagger.yaml이 없어도 동작하도록
+>>>>>>> main
 
 # 라우터 등록
 app.include_router(
@@ -59,6 +86,7 @@ app.include_router(
     tags=["Health Score"]
 )
 
+<<<<<<< HEAD
 # OpenAPI 커스터마이징
 def custom_openapi():
     if app.openapi_schema:
@@ -81,3 +109,25 @@ if __name__ == "__main__":
         reload=settings.DEBUG,
         log_level="info"
     )
+=======
+@app.get("/")
+def root():
+    """루트 엔드포인트"""
+    return {
+        "status": "ok",
+        "message": "IF(이프) API",
+        "version": "1.0.0",
+        "endpoints": {
+            "health": "/api/v1/health",
+            "job_risk": "/api/v1/job-risk",
+            "matching": "/api/v1/matching",
+            "docs": "/docs"
+        }
+    }
+
+
+@app.get("/health")
+def health_check():
+    """헬스 체크 엔드포인트"""
+    return {"status": "healthy"}
+>>>>>>> main
