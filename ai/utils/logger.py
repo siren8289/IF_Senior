@@ -1,34 +1,22 @@
 import logging
-import sys
+import json
 from datetime import datetime
 
+def setup_logger():
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
-def get_logger(name: str = __name__) -> logging.Logger:
-    """
-    로거 생성
-    
-    Args:
-        name: 로거 이름
-        
-    Returns:
-        logging.Logger: 로거 객체
-    """
-    logger = logging.getLogger(name)
-    
-    if not logger.handlers:
-        logger.setLevel(logging.INFO)
-        
-        # 콘솔 핸들러
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
-        
-        # 포맷터
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        console_handler.setFormatter(formatter)
-        
-        logger.addHandler(console_handler)
-    
-    return logger
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage()
+        }
+        return json.dumps(log_data, ensure_ascii=False)

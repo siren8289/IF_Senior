@@ -5,13 +5,13 @@ info:
   description: AI 기반 시니어 케어 워커 매칭 플랫폼 API
   version: 1.0.0
   contact:
-    name: S-Linker Team
-    email: info@s-linker.com
+    name: IF Team
+    email: info@if.com
 
 servers:
   - url: http://localhost:8080/api/v1
     description: Development Server
-  - url: https://api.s-linker.com/api/v1
+  - url: https://api.if.com/api/v1
     description: Production Server
 
 paths:

@@ -1,6 +1,13 @@
 #!/bin/bash
-# FastAPI 서버 실행 스크립트
 
-cd "$(dirname "$0")"
-source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# Python 버전 확인
+python --version
+
+# 패키지 설치
+pip install -r requirements.txt
+
+# 테스트 실행
+pytest tests/ -v
+
+# 서버 실행
+uvicorn main:app --host 0.0.0.0 --port 5000 --reload

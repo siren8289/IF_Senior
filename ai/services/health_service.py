@@ -1,114 +1,276 @@
-from schemas.health import HealthRequest, HealthResponse
-from features.health_features import HealthFeatureEngineer
-from utils.loader import ModelLoader
-import os
+import numpy as np
+import pickle
+from typing import Dict, List, Tuple
+import logging
 
+from schemas.health import HealthScoreResponse, RiskLevel
+from features.health_features import HealthFeatureExtractor
+from models.loader import get_health_model
+from utils.validators import validate_health_input
+from utils.exceptions import ValidationError, ModelPredictionError, ServiceError
 
-class HealthService:
-    """건강 점수 계산 서비스"""
-    
-    def __init__(self):
-        self.feature_engineer = HealthFeatureEngineer()
-        self.model_loader = ModelLoader()
-        self.model = None
-        self._load_model()
-    
-    def _load_model(self):
-        """모델 로드"""
-        model_path = os.path.join("models", "health_model.pkl")
+logger = logging.getLogger(__name__)
+
+class HealthScoreService:
+    """건강점수 계산 서비스 (ML 모델)"""
+
+    # 점수 가중치
+    WEIGHTS = {
+        "bmi_factor": 0.25,
+        "chronic_factor": 0.30,
+        "mobility_factor": 0.20,
+        "cognitive_factor": 0.15,
+        "age_factor": 0.10
+    }
+
+    @staticmethod
+    def calculate_health_score(
+        senior_profile_id: int,
+        height_cm: int,
+        weight_kg: float,
+        chronic_conditions: Dict[str, bool],
+        risk_flags: Dict[str, float]
+    ) -> HealthScoreResponse:
+        """
+        건강점수 계산 (규칙 기반 + ML 모델)
+
+        점수 계산 알고리즘:
+        1. 피처 추출
+        2. 규칙 기반 점수 계산
+        3. ML 모델 예측 (앙상블)
+        4. 최종 점수 정규화
+        """
+
+        logger.info(f"건강점수 계산 시작: senior_profile_id={senior_profile_id}")
+
         try:
-            self.model = self.model_loader.load_model(model_path)
-        except FileNotFoundError:
-            # 모델이 없을 경우 None으로 설정 (나중에 학습된 모델로 교체)
-            self.model = None
-    
-    async def calculate_score(self, request: HealthRequest) -> HealthResponse:
+            # 1️⃣ 입력 검증
+            try:
+                validate_health_input(height_cm, weight_kg, chronic_conditions, risk_flags)
+            except ValueError as e:
+                raise ValidationError(
+                    message=str(e),
+                    details={
+                        "height_cm": height_cm,
+                        "weight_kg": weight_kg,
+                        "chronic_conditions": chronic_conditions,
+                        "risk_flags": risk_flags
+                    }
+                )
+
+            # 2️⃣ 피처 추출
+            try:
+                features = HealthFeatureExtractor.extract_features(
+                    height_cm, weight_kg, chronic_conditions, risk_flags
+                )
+            except Exception as e:
+                logger.error(f"피처 추출 실패: {str(e)}", exc_info=True)
+                raise ServiceError(
+                    message="피처 추출 중 오류가 발생했습니다.",
+                    details={"error": str(e)}
+                )
+
+            # 3️⃣ 규칙 기반 점수 계산 (0-1)
+            try:
+                score_components = HealthScoreService._calculate_rule_based_score(
+                    features, chronic_conditions, risk_flags
+                )
+            except Exception as e:
+                logger.error(f"규칙 기반 점수 계산 실패: {str(e)}", exc_info=True)
+                raise ServiceError(
+                    message="점수 계산 중 오류가 발생했습니다.",
+                    details={"error": str(e)}
+                )
+
+            # 4️⃣ ML 모델 예측 (선택사항)
+            ml_score = HealthScoreService._predict_with_ml_model(features)
+
+            # 5️⃣ 앙상블 (규칙 70% + ML 30%)
+            try:
+                final_score_normalized = (
+                    0.7 * HealthScoreService._normalize_components(score_components) +
+                    0.3 * ml_score
+                )
+
+                # 6️⃣ 0-100 범위로 변환
+                final_score = final_score_normalized * 100
+                final_score = max(0, min(100, final_score))  # 클립핑
+            except Exception as e:
+                logger.error(f"점수 정규화 실패: {str(e)}", exc_info=True)
+                raise ServiceError(
+                    message="점수 정규화 중 오류가 발생했습니다.",
+                    details={"error": str(e)}
+                )
+
+            # 7️⃣ 위험 수준 판정
+            try:
+                risk_level = HealthScoreService._determine_risk_level(final_score)
+            except Exception as e:
+                logger.error(f"위험 수준 판정 실패: {str(e)}", exc_info=True)
+                # 위험 수준 판정 실패는 기본값 사용
+                risk_level = RiskLevel.MEDIUM
+
+            # 8️⃣ 권장사항 생성
+            try:
+                recommendations = HealthScoreService._generate_recommendations(
+                    final_score, chronic_conditions, risk_flags
+                )
+            except Exception as e:
+                logger.warning(f"권장사항 생성 실패: {str(e)}")
+                # 권장사항 생성 실패는 기본값 사용
+                recommendations = ["건강 상태를 확인해주세요."]
+
+            logger.info(f"건강점수 계산 완료: score={final_score:.1f}, risk={risk_level}")
+
+            return HealthScoreResponse(
+                senior_profile_id=senior_profile_id,
+                health_score=round(final_score, 1),
+                risk_level=risk_level,
+                components=score_components,
+                recommendations=recommendations
+            )
+
+        except (ValidationError, ServiceError):
+            # 커스텀 예외는 그대로 전달
+            raise
+        except Exception as e:
+            # 예상치 못한 오류는 ServiceError로 변환
+            logger.error(f"건강점수 계산 중 예상치 못한 오류: {str(e)}", exc_info=True)
+            raise ServiceError(
+                message="건강점수 계산 중 오류가 발생했습니다.",
+                details={"error_type": type(e).__name__, "error_message": str(e)}
+            )
+
+    @staticmethod
+    def _calculate_rule_based_score(
+        features: Dict[str, float],
+        chronic_conditions: Dict[str, bool],
+        risk_flags: Dict[str, float]
+    ) -> Dict[str, float]:
+        """규칙 기반 점수 계산 (0-1)"""
+
+        components = {
+            "bmi_factor": features["bmi_factor"],
+            "chronic_factor": features["chronic_factor"],
+            "mobility_factor": features["mobility_factor"],
+            "cognitive_factor": features["cognitive_factor"],
+            "age_factor": 0.85  # 예: 나이별 기본값
+        }
+
+        return components
+
+    @staticmethod
+    def _predict_with_ml_model(features: Dict[str, float]) -> float:
         """
-        건강 점수 계산
-        
-        Args:
-            request: 건강 점수 계산 요청
+        ML 모델을 이용한 예측 (0-1)
+
+        선택사항: BERT 기반 텍스트 분류나 다른 고급 모델 사용 가능
+        현재는 규칙 기반이 주, ML은 보조
+        """
+
+        try:
+            model = get_health_model()
             
-        Returns:
-            HealthResponse: 건강 점수 계산 결과
-        """
-        # 피처 엔지니어링
-        features = self.feature_engineer.extract_features(request)
-        
-        # 모델 예측 (모델이 있으면)
-        if self.model:
-            score = self.model.predict([features])[0]
-        else:
-            # 임시 로직 (모델이 없을 경우)
-            score = self._calculate_baseline_score(request)
-        
-        # 위험도 레벨 결정
-        risk_level = self._determine_risk_level(score)
-        
-        # 영향 요인 분석
-        factors = self._analyze_factors(request)
-        
-        # 권장사항 생성
-        recommendations = self._generate_recommendations(request, score)
-        
-        return HealthResponse(
-            score=float(score),
-            risk_level=risk_level,
-            factors=factors,
-            recommendations=recommendations
-        )
-    
-    def _calculate_baseline_score(self, request: HealthRequest) -> float:
-        """기본 점수 계산 (모델이 없을 경우)"""
-        base_score = 100.0
-        
-        # 나이 영향
-        age_penalty = max(0, (request.age - 30) * 0.5)
-        
-        # 건강 상태 영향
-        condition_penalty = len(request.health_conditions) * 10
-        
-        score = base_score - age_penalty - condition_penalty
-        return max(0, min(100, score))
-    
-    def _determine_risk_level(self, score: float) -> str:
-        """위험도 레벨 결정"""
+            if model is None:
+                logger.debug("ML 모델이 없습니다. 기본값을 사용합니다.")
+                return 0.5  # 기본값으로 폴백
+
+            # 피처를 배열로 변환
+            try:
+                feature_vector = np.array([
+                    features.get("bmi_factor", 0.5),
+                    features.get("chronic_factor", 0.8),
+                    features.get("mobility_factor", 0.9),
+                    features.get("cognitive_factor", 0.9)
+                ]).reshape(1, -1)
+            except Exception as e:
+                logger.warning(f"피처 벡터 생성 실패: {str(e)}")
+                return 0.5  # 기본값으로 폴백
+
+            # 모델 예측
+            try:
+                prediction = model.predict(feature_vector)[0]
+                return float(prediction)
+            except AttributeError as e:
+                logger.warning(f"모델에 predict 메서드가 없습니다: {str(e)}")
+                return 0.5  # 기본값으로 폴백
+            except Exception as e:
+                logger.warning(f"모델 예측 실행 실패: {str(e)}")
+                return 0.5  # 기본값으로 폴백
+
+        except Exception as e:
+            logger.warning(f"ML 모델 예측 실패 (규칙 기반으로 진행): {str(e)}")
+            return 0.5  # 기본값으로 폴백
+
+    @staticmethod
+    def _normalize_components(components: Dict[str, float]) -> float:
+        """컴포넌트 정규화 및 가중평균 계산"""
+
+        total_score = 0.0
+        total_weight = 0.0
+
+        for component_name, component_value in components.items():
+            weight = HealthScoreService.WEIGHTS.get(component_name, 0.1)
+            total_score += component_value * weight
+            total_weight += weight
+
+        return total_score / total_weight if total_weight > 0 else 0.5
+
+    @staticmethod
+    def _determine_risk_level(score: float) -> RiskLevel:
+        """건강점수 → 위험 수준"""
         if score >= 80:
-            return "low"
+            return RiskLevel.LOW
         elif score >= 60:
-            return "medium"
+            return RiskLevel.MEDIUM
+        elif score >= 40:
+            return RiskLevel.HIGH
         else:
-            return "high"
-    
-    def _analyze_factors(self, request: HealthRequest) -> dict:
-        """영향 요인 분석"""
-        factors = {}
-        
-        # 나이 영향
-        if request.age > 50:
-            factors["age_impact"] = -5.0
-        elif request.age < 30:
-            factors["age_impact"] = 5.0
-        else:
-            factors["age_impact"] = 0.0
-        
-        # 건강 상태 영향
-        factors["health_conditions_impact"] = -len(request.health_conditions) * 5.0
-        
-        return factors
-    
-    def _generate_recommendations(self, request: HealthRequest, score: float) -> list:
-        """권장사항 생성"""
+            return RiskLevel.CRITICAL
+
+    @staticmethod
+    def _generate_recommendations(
+        score: float,
+        chronic_conditions: Dict[str, bool],
+        risk_flags: Dict[str, float]
+    ) -> List[str]:
+        """점수와 질환에 따른 권장사항 생성"""
+
         recommendations = []
-        
-        if score < 60:
-            recommendations.append("정기적인 건강검진 권장")
-            recommendations.append("생활습관 개선 필요")
-        
-        if len(request.health_conditions) > 0:
-            recommendations.append("기존 건강 상태 관리 중요")
-        
-        if request.age > 50:
-            recommendations.append("연령대에 맞는 건강 관리 필요")
-        
-        return recommendations
+
+        # 점수 기반
+        if score < 50:
+            recommendations.append("전문의 진료 권장")
+            recommendations.append("건강 관리 프로그램 참여")
+        elif score < 70:
+            recommendations.append("정기적인 건강검진 필요")
+            recommendations.append("생활습관 개선")
+
+        # 만성질환 기반
+        if chronic_conditions.get("hypertension"):
+            recommendations.append("혈압 관리 필요")
+            recommendations.append("염분 섭취 제한")
+
+        if chronic_conditions.get("diabetes"):
+            recommendations.append("혈당 관리 필요")
+            recommendations.append("식이요법 상담")
+
+        if chronic_conditions.get("arthritis"):
+            recommendations.append("관절 운동 치료 권장")
+            recommendations.append("적절한 휴식 필요")
+
+        # 위험 지표 기반
+        if risk_flags.get("mobility_limited", 0) > 0.5:
+            recommendations.append("물리치료 권장")
+            recommendations.append("운동 능력 회복 프로그램")
+
+        if risk_flags.get("cognitive_impairment_risk", 0) > 0.5:
+            recommendations.append("인지 기능 검사 필요")
+            recommendations.append("인지 훈련 프로그램")
+
+        # 기본 권장사항
+        if len(recommendations) == 0:
+            recommendations.append("현재 건강 상태 유지")
+            recommendations.append("규칙적인 운동 권장")
+
+        return recommendations[:5]  # 최대 5개
