@@ -1,0 +1,1377 @@
+
+openapi: 3.0.0
+info:
+  title: S-Linker API
+  description: AI 기반 시니어 케어 워커 매칭 플랫폼 API
+  version: 1.0.0
+  contact:
+    name: S-Linker Team
+    email: info@s-linker.com
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Development Server
+  - url: https://api.s-linker.com/api/v1
+    description: Production Server
+
+paths:
+  /auth/register:
+    post:
+      summary: 사용자 회원가입
+      description: 새로운 사용자를 등록합니다. 사용자 타입(senior_worker, care_recipient, admin)에 따라 다른 프로필 정보가 필요합니다.
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserRegistrationRequest'
+      responses:
+        '201':
+          description: 회원가입 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 이미 존재하는 이메일
+
+  /auth/login:
+    post:
+      summary: 사용자 로그인
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: 로그인 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/{userId}:
+    get:
+      summary: 사용자 상세 정보 조회
+      tags:
+        - Users
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 사용자 정보 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      summary: 사용자 정보 수정
+      tags:
+        - Users
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: 사용자 정보 수정 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+
+  /senior-profiles:
+    get:
+      summary: 시니어 워커 프로필 목록 조회
+      description: 필터링, 검색, 정렬 기능을 지원합니다.
+      tags:
+        - Senior Profiles
+      parameters:
+        - name: region
+          in: query
+          schema:
+            type: string
+          description: 지역 필터
+        - name: health_score_min
+          in: query
+          schema:
+            type: number
+          description: 최소 건강 점수
+        - name: experience_years_min
+          in: query
+          schema:
+            type: integer
+          description: 최소 경력 연수
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [health_score, experience, created_at]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 프로필 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  limit:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SeniorProfileResponse'
+
+    post:
+      summary: 시니어 워커 프로필 생성
+      tags:
+        - Senior Profiles
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeniorProfileRequest'
+      responses:
+        '201':
+          description: 프로필 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeniorProfileResponse'
+
+  /senior-profiles/{seniorProfileId}:
+    get:
+      summary: 시니어 워커 프로필 상세 조회
+      tags:
+        - Senior Profiles
+      parameters:
+        - name: seniorProfileId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 프로필 상세 정보 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeniorProfileDetailResponse'
+
+    put:
+      summary: 시니어 워커 프로필 수정
+      tags:
+        - Senior Profiles
+      parameters:
+        - name: seniorProfileId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeniorProfileRequest'
+      responses:
+        '200':
+          description: 프로필 수정 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeniorProfileResponse'
+
+  /senior-health-profiles/{seniorProfileId}:
+    get:
+      summary: 시니어 건강 정보 조회
+      tags:
+        - Senior Health
+      parameters:
+        - name: seniorProfileId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 건강 정보 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeniorHealthProfileResponse'
+
+    put:
+      summary: 시니어 건강 정보 수정
+      tags:
+        - Senior Health
+      parameters:
+        - name: seniorProfileId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeniorHealthProfileRequest'
+      responses:
+        '200':
+          description: 건강 정보 수정 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SeniorHealthProfileResponse'
+
+  /jobs:
+    get:
+      summary: 케어 업무 목록 조회
+      description: 필터링 및 검색 기능을 지원합니다.
+      tags:
+        - Jobs
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, in_progress, completed, cancelled]
+        - name: location
+          in: query
+          schema:
+            type: string
+        - name: care_recipient_id
+          in: query
+          schema:
+            type: integer
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, start_at, match_score]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 업무 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  limit:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JobResponse'
+
+    post:
+      summary: 새로운 케어 업무 등록
+      description: 케어 수요자가 필요한 새로운 업무를 등록합니다.
+      tags:
+        - Jobs
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+      responses:
+        '201':
+          description: 업무 등록 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+
+  /jobs/{jobId}:
+    get:
+      summary: 업무 상세 정보 조회
+      tags:
+        - Jobs
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 업무 상세 정보 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobDetailResponse'
+
+    put:
+      summary: 업무 정보 수정
+      tags:
+        - Jobs
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobUpdateRequest'
+      responses:
+        '200':
+          description: 업무 정보 수정 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+
+  /matchings:
+    get:
+      summary: 매칭 목록 조회
+      tags:
+        - Matchings
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, accepted, rejected, completed, cancelled]
+        - name: job_id
+          in: query
+          schema:
+            type: integer
+        - name: senior_profile_id
+          in: query
+          schema:
+            type: integer
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [match_score, created_at]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 매칭 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MatchingResponse'
+
+    post:
+      summary: 매칭 생성 (AI 기반 추천)
+      description: 업무에 대해 AI 엔진이 추천하는 시니어 워커와의 매칭을 생성합니다.
+      tags:
+        - Matchings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - job_id
+              properties:
+                job_id:
+                  type: integer
+                  description: 업무 ID
+      responses:
+        '201':
+          description: 매칭 생성 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matchings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MatchingResponse'
+                  algorithm_version:
+                    type: string
+
+  /matchings/{matchingId}:
+    get:
+      summary: 매칭 상세 정보 조회
+      tags:
+        - Matchings
+      parameters:
+        - name: matchingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 매칭 상세 정보 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchingDetailResponse'
+
+  /matchings/{matchingId}/accept:
+    post:
+      summary: 매칭 수락
+      tags:
+        - Matchings
+      parameters:
+        - name: matchingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 매칭 수락 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchingResponse'
+
+  /matchings/{matchingId}/reject:
+    post:
+      summary: 매칭 거절
+      tags:
+        - Matchings
+      parameters:
+        - name: matchingId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: 거절 사유
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 매칭 거절 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchingResponse'
+
+  /safety-logs:
+    get:
+      summary: 안전 로그 조회
+      description: 실시간 안전 모니터링 로그를 조회합니다.
+      tags:
+        - Safety Monitoring
+      parameters:
+        - name: senior_profile_id
+          in: query
+          schema:
+            type: integer
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: alert_level
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 안전 로그 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SafetyLogResponse'
+
+    post:
+      summary: 안전 로그 기록
+      description: 실시간 안전 모니터링 데이터를 기록합니다.
+      tags:
+        - Safety Monitoring
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SafetyLogRequest'
+      responses:
+        '201':
+          description: 안전 로그 기록 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafetyLogResponse'
+
+  /daily-reports:
+    post:
+      summary: 일일 보고서 생성
+      description: 매칭된 업무에 대한 일일 보고서를 생성합니다.
+      tags:
+        - Reports
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DailyReportRequest'
+      responses:
+        '201':
+          description: 일일 보고서 생성 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyReportResponse'
+
+  /daily-reports/{matchingId}:
+    get:
+      summary: 매칭별 일일 보고서 조회
+      tags:
+        - Reports
+      parameters:
+        - name: matchingId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 일일 보고서 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DailyReportResponse'
+
+  /recommendations:
+    get:
+      summary: 추천 목록 조회
+      tags:
+        - Recommendations
+      parameters:
+        - name: senior_profile_id
+          in: query
+          schema:
+            type: integer
+        - name: job_id
+          in: query
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 추천 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RecommendationResponse'
+
+  /admin/users:
+    get:
+      summary: '[Admin] 전체 사용자 목록 조회'
+      tags:
+        - Admin
+      parameters:
+        - name: user_type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 사용자 목록 조회 성공
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserAdminResponse'
+
+  /admin/reports:
+    get:
+      summary: '[Admin] 관리자 보고서 조회'
+      tags:
+        - Admin
+      parameters:
+        - name: report_type
+          in: query
+          schema:
+            type: string
+            enum: [matching_stats, safety_alerts, user_activity]
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 관리자 보고서 조회 성공
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminReportResponse'
+
+components:
+  schemas:
+    # Auth & User Schemas
+    UserRegistrationRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+        - phone
+        - user_type
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+        name:
+          type: string
+        phone:
+          type: string
+        user_type:
+          type: string
+          enum: [senior_worker, care_recipient, admin]
+        is_active:
+          type: boolean
+          default: true
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        user_type:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/UserResponse'
+        - type: object
+          properties:
+            senior_profile:
+              $ref: '#/components/schemas/SeniorProfileResponse'
+            care_recipient:
+              $ref: '#/components/schemas/CareRecipientResponse'
+            saved_jobs:
+              type: array
+              items:
+                $ref: '#/components/schemas/JobResponse'
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        phone:
+          type: string
+        is_active:
+          type: boolean
+
+    UserAdminResponse:
+      allOf:
+        - $ref: '#/components/schemas/UserResponse'
+        - type: object
+          properties:
+            total_matchings:
+              type: integer
+            completed_jobs:
+              type: integer
+            last_login_at:
+              type: string
+              format: date-time
+
+    # Senior Profile Schemas
+    SeniorProfileRequest:
+      type: object
+      required:
+        - user_id
+        - region
+        - health_score
+      properties:
+        user_id:
+          type: integer
+        region:
+          type: string
+        health_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        voice_enrolled:
+          type: boolean
+        biometric_enabled:
+          type: boolean
+
+    SeniorProfileResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        region:
+          type: string
+        health_score:
+          type: number
+        voice_enrolled:
+          type: boolean
+        biometric_enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SeniorProfileDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/SeniorProfileResponse'
+        - type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/UserResponse'
+            health_profile:
+              $ref: '#/components/schemas/SeniorHealthProfileResponse'
+            experiences:
+              type: array
+              items:
+                $ref: '#/components/schemas/SeniorExperienceResponse'
+            settings:
+              $ref: '#/components/schemas/SeniorSettingsResponse'
+            saved_jobs:
+              type: array
+              items:
+                $ref: '#/components/schemas/JobResponse'
+
+    # Senior Health Schemas
+    SeniorHealthProfileRequest:
+      type: object
+      properties:
+        height_cm:
+          type: integer
+        weight_kg:
+          type: number
+        chronic_conditions:
+          type: object
+          description: 만성질환 정보 (JSON)
+        risk_flags:
+          type: object
+          description: 위험 플래그 (JSON)
+
+    SeniorHealthProfileResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        senior_profile_id:
+          type: integer
+        height_cm:
+          type: integer
+        weight_kg:
+          type: number
+        chronic_conditions:
+          type: object
+        risk_flags:
+          type: object
+        updated_at:
+          type: string
+          format: date-time
+
+    SeniorExperienceResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        senior_profile_id:
+          type: integer
+        title:
+          type: string
+        years:
+          type: integer
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    SeniorSettingsResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        senior_profile_id:
+          type: integer
+        font_scale:
+          type: number
+        high_contrast:
+          type: boolean
+        voice_guidance:
+          type: boolean
+        notification_enabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+
+    # Care Recipient Schemas
+    CareRecipientResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        name:
+          type: string
+        age:
+          type: integer
+        notes:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # Job Schemas
+    JobCreateRequest:
+      type: object
+      required:
+        - care_recipient_id
+        - title
+        - description
+        - location_text
+        - estimated_minutes
+        - required_health_level
+      properties:
+        care_recipient_id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        location_text:
+          type: string
+        estimated_minutes:
+          type: integer
+        required_health_level:
+          type: integer
+          minimum: 1
+          maximum: 5
+        risk_level:
+          type: integer
+          minimum: 1
+          maximum: 5
+
+    JobUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        location_text:
+          type: string
+        estimated_minutes:
+          type: integer
+        required_health_level:
+          type: integer
+        risk_level:
+          type: integer
+        status:
+          type: string
+          enum: [open, in_progress, completed, cancelled]
+
+    JobResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        employer_profile_id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: string
+        location_text:
+          type: string
+        estimated_minutes:
+          type: integer
+        required_health_level:
+          type: integer
+        risk_level:
+          type: integer
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    JobDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/JobResponse'
+        - type: object
+          properties:
+            care_recipient:
+              $ref: '#/components/schemas/CareRecipientResponse'
+            employer_profile:
+              type: object
+            matchings:
+              type: array
+              items:
+                $ref: '#/components/schemas/MatchingResponse'
+
+    # Matching Schemas
+    MatchingResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        senior_profile_id:
+          type: integer
+        job_id:
+          type: integer
+        match_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        status:
+          type: string
+          enum: [pending, accepted, rejected, completed, cancelled]
+        total_hours:
+          type: integer
+        safety_score:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+
+    MatchingDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/MatchingResponse'
+        - type: object
+          properties:
+            senior_profile:
+              $ref: '#/components/schemas/SeniorProfileResponse'
+            job:
+              $ref: '#/components/schemas/JobResponse'
+            daily_reports:
+              type: array
+              items:
+                $ref: '#/components/schemas/DailyReportResponse'
+            safety_logs:
+              type: array
+              items:
+                $ref: '#/components/schemas/SafetyLogResponse'
+
+    # Safety Monitoring Schemas
+    SafetyLogRequest:
+      type: object
+      required:
+        - senior_profile_id
+        - activity
+      properties:
+        senior_profile_id:
+          type: integer
+        matching_id:
+          type: integer
+        activity:
+          type: string
+        heart_rate:
+          type: integer
+        posture_data:
+          type: object
+          description: 자세 데이터 (JSON)
+        alerts:
+          type: array
+          items:
+            type: string
+
+    SafetyLogResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        senior_profile_id:
+          type: integer
+        matching_id:
+          type: integer
+        activity:
+          type: string
+        heart_rate:
+          type: integer
+        posture_data:
+          type: object
+        alerts:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # Report Schemas
+    DailyReportRequest:
+      type: object
+      required:
+        - matching_id
+        - report_date
+      properties:
+        matching_id:
+          type: integer
+        report_date:
+          type: string
+          format: date
+        summary:
+          type: string
+        issues:
+          type: array
+          items:
+            type: string
+
+    DailyReportResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        matching_id:
+          type: integer
+        report_date:
+          type: string
+          format: date
+        summary:
+          type: string
+        issues:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    RecommendationResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        senior_profile_id:
+          type: integer
+        job_id:
+          type: integer
+        rank_no:
+          type: integer
+        score:
+          type: number
+        cache_key:
+          type: string
+        generated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    # Admin Schemas
+    AdminReportResponse:
+      type: object
+      properties:
+        report_type:
+          type: string
+        period:
+          type: object
+          properties:
+            from:
+              type: string
+              format: date
+            to:
+              type: string
+              format: date
+        summary:
+          type: object
+          description: 보고서 요약 (타입별로 다름)
+        details:
+          type: object
+          description: 상세 데이터
+
+  responses:
+    BadRequest:
+      description: 잘못된 요청
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+              details:
+                type: array
+
+    Unauthorized:
+      description: 인증 실패
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+
+    NotFound:
+      description: 리소스를 찾을 수 없음
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+              message:
+                type: string
+              resource_id:
+                type: integer
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT 토큰을 사용한 인증
+
+tags:
+  - name: Authentication
+    description: 사용자 인증 및 회원가입
+  - name: Users
+    description: 사용자 정보 관리
+  - name: Senior Profiles
+    description: 시니어 워커 프로필 관리
+  - name: Senior Health
+    description: 시니어 건강 정보 관리
+  - name: Jobs
+    description: 케어 업무 관리
+  - name: Matchings
+    description: 매칭 관리 및 AI 추천
+  - name: Safety Monitoring
+    description: 실시간 안전 모니터링
+  - name: Reports
+    description: 일일 보고서 및 분석
+  - name: Recommendations
+    description: 추천 시스템
+  - name: Admin
+    description: 관리자 기능
