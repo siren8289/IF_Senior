@@ -1,9 +1,9 @@
-<<<<<<< HEAD
 from fastapi import APIRouter, HTTPException, status
 import logging
 
 from schemas.health import HealthScoreRequest, HealthScoreResponse, ErrorResponse
 from services.health_service import HealthScoreService
+from utils.exceptions import ValidationError, ServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -74,48 +74,31 @@ async def calculate_health_score(request: HealthScoreRequest) -> HealthScoreResp
             risk_flags=request.risk_flags
         )
 
+        logger.info(f"건강점수 계산 성공: senior_profile_id={request.senior_profile_id}, score={response.health_score}")
         return response
 
+    except ValidationError as e:
+        # ValidationError는 전역 핸들러에서 처리되지만, 여기서도 로깅
+        logger.warning(f"입력 검증 오류: {e.message}")
+        raise  # 전역 핸들러로 전달
+
     except ValueError as e:
-        logger.error(f"입력 검증 오류: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+        # ValueError를 ValidationError로 변환
+        logger.warning(f"입력 검증 오류: {str(e)}")
+        raise ValidationError(
+            message=str(e),
+            details={"field": None, "value": None}
         )
 
+    except ServiceError as e:
+        # ServiceError는 전역 핸들러에서 처리
+        logger.error(f"서비스 오류: {e.message}")
+        raise  # 전역 핸들러로 전달
+
     except Exception as e:
-        logger.error(f"내부 서버 오류: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="건강점수 계산 중 오류 발생"
+        # 예상치 못한 오류는 ServiceError로 변환
+        logger.error(f"예상치 못한 오류: {str(e)}", exc_info=True)
+        raise ServiceError(
+            message="건강점수 계산 중 오류가 발생했습니다.",
+            details={"error_type": type(e).__name__, "error_message": str(e)}
         )
-=======
-from fastapi import APIRouter, HTTPException
-from typing import List
-from schemas.health import HealthRequest, HealthResponse
-from services.health_service import HealthService
-
-router = APIRouter(prefix="/api/v1/health", tags=["health"])
-
-health_service = HealthService()
-
-
-@router.post("/score", response_model=HealthResponse)
-async def calculate_health_score(request: HealthRequest):
-    """
-    건강 점수 계산 API
-    """
-    try:
-        result = await health_service.calculate_score(request)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/")
-async def health_check():
-    """
-    Health check endpoint
-    """
-    return {"status": "ok", "service": "health"}
->>>>>>> main

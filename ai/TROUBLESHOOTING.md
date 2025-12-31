@@ -8,6 +8,7 @@
 3. [Pydantic 버전 호환성](#pydantic-버전-호환성)
 4. [모델 로딩 오류](#모델-로딩-오류)
 5. [서버 실행 오류](#서버-실행-오류)
+6. [에러 처리 및 예외 처리](#에러-처리-및-예외-처리)
 
 ---
 
@@ -256,6 +257,355 @@ pip install uvicorn[standard]
 
 ---
 
+## 에러 처리 및 예외 처리
+
+### 에러 처리 구조
+
+이 프로젝트는 계층화된 에러 처리 시스템을 사용합니다:
+
+```
+API 레이어 (api/v1/health.py)
+  ↓
+서비스 레이어 (services/health_service.py)
+  ↓
+유틸리티 레이어 (utils/validators.py, utils/exceptions.py)
+  ↓
+전역 예외 핸들러 (main.py)
+```
+
+### 커스텀 예외 클래스
+
+**위치:** `utils/exceptions.py`
+
+```python
+BaseAPIException          # 기본 예외 클래스
+├── ValidationError      # 입력 검증 오류 (400)
+├── ModelLoadError       # 모델 로드 오류 (503)
+├── ModelPredictionError # 모델 예측 오류 (500)
+└── ServiceError         # 서비스 레이어 오류 (500)
+```
+
+### 에러 응답 형식
+
+모든 에러는 `ErrorResponse` 스키마를 따릅니다:
+
+```json
+{
+  "error_code": "VALIDATION_ERROR",
+  "message": "키는 100-250cm 범위여야 합니다. 입력값: 300cm",
+  "details": {
+    "field": "height_cm",
+    "value": 300,
+    "constraint": "100-250cm"
+  }
+}
+```
+
+### 문제: `VALIDATION_ERROR` - 입력 검증 실패
+
+**증상:**
+```json
+{
+  "error_code": "VALIDATION_ERROR",
+  "message": "키는 100-250cm 범위여야 합니다. 입력값: 300cm",
+  "details": {
+    "field": "height_cm",
+    "value": 300,
+    "constraint": "100-250cm"
+  }
+}
+```
+
+**원인:**
+- 입력값이 유효성 검증 규칙을 위반함
+- `utils/validators.py`의 `validate_health_input()` 함수에서 검증 실패
+
+**해결 방법:**
+1. 요청 데이터 확인:
+```bash
+curl -X POST http://localhost:5000/api/ml/v1/health/calculate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "senior_profile_id": 1,
+    "height_cm": 170,  # 100-250 범위 내
+    "weight_kg": 75.5,  # 20-200 범위 내
+    "chronic_conditions": {},
+    "risk_flags": {}
+  }'
+```
+
+2. 검증 규칙 확인:
+   - `height_cm`: 100-250cm
+   - `weight_kg`: 20-200kg
+   - `chronic_conditions`: 딕셔너리, 값은 boolean
+   - `risk_flags`: 딕셔너리, 값은 0-1 범위의 숫자
+
+**참고:**
+- 모든 검증 오류는 `ValidationError`로 변환되어 400 상태 코드로 반환됩니다.
+- `details` 필드에 구체적인 필드명과 제약 조건이 포함됩니다.
+
+---
+
+### 문제: `MODEL_LOAD_ERROR` - 모델 로드 실패
+
+**증상:**
+```json
+{
+  "error_code": "MODEL_LOAD_ERROR",
+  "message": "건강점수 모델 파일을 찾을 수 없습니다: models/health_model.pkl",
+  "details": {
+    "model_path": "models/health_model.pkl"
+  }
+}
+```
+
+**원인:**
+- 모델 파일이 존재하지 않음
+- 모델 파일 경로가 잘못 설정됨
+- 모델 파일이 손상됨
+
+**해결 방법:**
+1. 모델 파일 확인:
+```bash
+ls -la ai/models/*.pkl
+```
+
+2. 모델이 없으면:
+   - 규칙 기반 로직으로 자동 폴백 (서버는 정상 동작)
+   - 모델 학습 스크립트 실행하여 모델 생성
+
+3. 모델 경로 확인:
+```python
+# config/settings.py
+HEALTH_MODEL_PATH: str = "models/health_model.pkl"
+```
+
+**참고:**
+- 모델이 없어도 서버는 정상적으로 동작합니다.
+- ML 모델 예측 실패 시 기본값(0.5)을 사용하여 규칙 기반 점수만 계산합니다.
+
+---
+
+### 문제: `MODEL_PREDICTION_ERROR` - 모델 예측 실패
+
+**증상:**
+```json
+{
+  "error_code": "MODEL_PREDICTION_ERROR",
+  "message": "모델 예측 중 오류가 발생했습니다.",
+  "details": {
+    "error": "AttributeError: 'NoneType' object has no attribute 'predict'"
+  }
+}
+```
+
+**원인:**
+- 모델 객체가 None
+- 모델에 `predict` 메서드가 없음
+- 피처 벡터 형식이 잘못됨
+
+**해결 방법:**
+1. 모델 로드 확인:
+```python
+from models.loader import get_health_model
+model = get_health_model()
+if model is None:
+    print("모델이 로드되지 않았습니다.")
+```
+
+2. 모델 형식 확인:
+   - 모델이 scikit-learn 형식인지 확인
+   - `predict` 메서드가 있는지 확인
+
+3. 피처 벡터 확인:
+   - 피처 개수가 모델 입력과 일치하는지 확인
+
+**참고:**
+- 모델 예측 실패 시 자동으로 기본값(0.5)을 사용합니다.
+- 경고 로그만 출력하고 서비스는 계속 동작합니다.
+
+---
+
+### 문제: `SERVICE_ERROR` - 서비스 레이어 오류
+
+**증상:**
+```json
+{
+  "error_code": "SERVICE_ERROR",
+  "message": "건강점수 계산 중 오류가 발생했습니다.",
+  "details": {
+    "error_type": "KeyError",
+    "error_message": "'bmi_factor'"
+  }
+}
+```
+
+**원인:**
+- 피처 추출 실패
+- 점수 계산 로직 오류
+- 예상치 못한 예외 발생
+
+**해결 방법:**
+1. 로그 확인:
+```bash
+# 서버 로그에서 상세한 스택 트레이스 확인
+tail -f logs/app.log | grep ERROR
+```
+
+2. 피처 추출 확인:
+```python
+from features.health_features import HealthFeatureExtractor
+features = HealthFeatureExtractor.extract_features(
+    height_cm=170,
+    weight_kg=75.5,
+    chronic_conditions={},
+    risk_flags={}
+)
+print(features)  # 모든 필수 키가 있는지 확인
+```
+
+3. 디버그 모드 활성화:
+```python
+# config/settings.py
+DEBUG = True  # 상세한 에러 정보 포함
+```
+
+**참고:**
+- `DEBUG=True`일 때만 `details`에 스택 트레이스가 포함됩니다.
+- 프로덕션 환경에서는 보안을 위해 스택 트레이스를 숨깁니다.
+
+---
+
+### 문제: `INTERNAL_SERVER_ERROR` - 예상치 못한 오류
+
+**증상:**
+```json
+{
+  "error_code": "INTERNAL_SERVER_ERROR",
+  "message": "서버 내부 오류가 발생했습니다. 관리자에게 문의하세요.",
+  "details": null  # 또는 DEBUG=True일 때 스택 트레이스
+}
+```
+
+**원인:**
+- 예외 처리되지 않은 예외
+- 시스템 레벨 오류
+- 메모리 부족 등
+
+**해결 방법:**
+1. 로그 확인:
+```bash
+# 전체 스택 트레이스 확인
+grep -A 50 "예상치 못한 오류" logs/app.log
+```
+
+2. 서버 상태 확인:
+```bash
+# 메모리 사용량
+free -h
+
+# 디스크 공간
+df -h
+
+# 프로세스 상태
+ps aux | grep uvicorn
+```
+
+3. 재시작:
+```bash
+cd /Users/m/IF/ai
+./run.sh
+```
+
+**참고:**
+- 이 오류는 전역 예외 핸들러에서 처리됩니다.
+- 모든 예외는 로그에 기록되므로 로그를 확인하세요.
+
+---
+
+### 에러 처리 테스트
+
+**1. 입력 검증 오류 테스트:**
+```bash
+# 잘못된 키 값
+curl -X POST http://localhost:5000/api/ml/v1/health/calculate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "senior_profile_id": 1,
+    "height_cm": 300,  # 범위 초과
+    "weight_kg": 75.5,
+    "chronic_conditions": {},
+    "risk_flags": {}
+  }'
+```
+
+**예상 응답:**
+```json
+{
+  "error_code": "VALIDATION_ERROR",
+  "message": "키는 100-250cm 범위여야 합니다. 입력값: 300cm",
+  "details": {
+    "field": "height_cm",
+    "value": 300,
+    "constraint": "100-250cm"
+  }
+}
+```
+
+**2. 정상 요청 테스트:**
+```bash
+curl -X POST http://localhost:5000/api/ml/v1/health/calculate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "senior_profile_id": 1,
+    "height_cm": 170,
+    "weight_kg": 75.5,
+    "chronic_conditions": {
+      "hypertension": true
+    },
+    "risk_flags": {
+      "mobility_limited": 0.3
+    }
+  }'
+```
+
+**예상 응답:**
+```json
+{
+  "senior_profile_id": 1,
+  "health_score": 78.5,
+  "risk_level": "medium",
+  "components": {
+    "bmi_factor": 0.90,
+    "chronic_factor": 0.65,
+    "mobility_factor": 0.95,
+    "cognitive_factor": 0.95,
+    "age_factor": 0.85
+  },
+  "recommendations": [
+    "혈압 관리 필요",
+    "규칙적인 운동 권장"
+  ]
+}
+```
+
+---
+
+### 에러 처리 체크리스트
+
+에러 처리가 제대로 작동하는지 확인:
+
+- [ ] `ValidationError`가 400 상태 코드로 반환됨
+- [ ] `ModelLoadError`가 503 상태 코드로 반환됨
+- [ ] `ServiceError`가 500 상태 코드로 반환됨
+- [ ] 모든 에러 응답이 `ErrorResponse` 스키마를 따름
+- [ ] `details` 필드에 구체적인 정보가 포함됨
+- [ ] 로그에 모든 예외가 기록됨
+- [ ] 모델이 없어도 서비스가 정상 동작함
+- [ ] 디버그 모드에서만 스택 트레이스가 포함됨
+
+---
+
 ## 일반적인 문제 해결 절차
 
 ### 1. 가상환경 확인
@@ -308,9 +658,11 @@ logging.basicConfig(level=logging.DEBUG)
 - [ ] `schemas/health.py`에 모든 클래스 정의됨
 - [ ] `models/loader.py` 파일 존재
 - [ ] `utils/validators.py` 파일 존재
+- [ ] `utils/exceptions.py` 파일 존재 (커스텀 예외 클래스)
 - [ ] `config/settings.py` 파일 존재
 - [ ] Pydantic v2 호환성 확인 (`json_schema_extra` 사용)
 - [ ] 현재 디렉토리가 `ai/`인지 확인
+- [ ] 전역 예외 핸들러가 `main.py`에 등록됨
 
 ---
 
@@ -331,5 +683,66 @@ logging.basicConfig(level=logging.DEBUG)
 
 ---
 
-**최종 업데이트:** 2025-12-31
+---
+
+## 에러 처리 아키텍처 요약
+
+### 에러 처리 흐름도
+
+```
+클라이언트 요청
+    ↓
+API 엔드포인트 (api/v1/health.py)
+    ↓ 예외 발생 시
+서비스 레이어 (services/health_service.py)
+    ↓ 예외 발생 시
+유틸리티 레이어 (utils/validators.py, utils/exceptions.py)
+    ↓
+전역 예외 핸들러 (main.py)
+    ↓
+ErrorResponse JSON 응답
+```
+
+### 예외 타입별 처리
+
+| 예외 타입 | HTTP 상태 코드 | 사용 시점 |
+|---------|--------------|----------|
+| `ValidationError` | 400 Bad Request | 입력 검증 실패 |
+| `ModelLoadError` | 503 Service Unavailable | 모델 로드 실패 |
+| `ModelPredictionError` | 500 Internal Server Error | 모델 예측 실패 |
+| `ServiceError` | 500 Internal Server Error | 서비스 로직 오류 |
+| `ValueError` | 400 Bad Request | 일반적인 값 오류 |
+| 기타 예외 | 500 Internal Server Error | 예상치 못한 오류 |
+
+### 에러 응답 예시
+
+**입력 검증 오류:**
+```json
+{
+  "error_code": "VALIDATION_ERROR",
+  "message": "키는 100-250cm 범위여야 합니다. 입력값: 300cm",
+  "details": {
+    "field": "height_cm",
+    "value": 300,
+    "constraint": "100-250cm"
+  }
+}
+```
+
+**서비스 오류:**
+```json
+{
+  "error_code": "SERVICE_ERROR",
+  "message": "건강점수 계산 중 오류가 발생했습니다.",
+  "details": {
+    "error_type": "KeyError",
+    "error_message": "'bmi_factor'"
+  }
+}
+```
+
+---
+
+**최종 업데이트:** 2025-01-01
 **작성자:** AI Assistant
+**주요 변경사항:** 에러 처리 시스템 추가 및 트러블슈팅 문서 보완

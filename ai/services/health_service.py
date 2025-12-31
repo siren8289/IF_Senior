@@ -7,6 +7,7 @@ from schemas.health import HealthScoreResponse, RiskLevel
 from features.health_features import HealthFeatureExtractor
 from models.loader import get_health_model
 from utils.validators import validate_health_input
+from utils.exceptions import ValidationError, ModelPredictionError, ServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -44,38 +45,80 @@ class HealthScoreService:
 
         try:
             # 1️⃣ 입력 검증
-            validate_health_input(height_cm, weight_kg, chronic_conditions, risk_flags)
+            try:
+                validate_health_input(height_cm, weight_kg, chronic_conditions, risk_flags)
+            except ValueError as e:
+                raise ValidationError(
+                    message=str(e),
+                    details={
+                        "height_cm": height_cm,
+                        "weight_kg": weight_kg,
+                        "chronic_conditions": chronic_conditions,
+                        "risk_flags": risk_flags
+                    }
+                )
 
             # 2️⃣ 피처 추출
-            features = HealthFeatureExtractor.extract_features(
-                height_cm, weight_kg, chronic_conditions, risk_flags
-            )
+            try:
+                features = HealthFeatureExtractor.extract_features(
+                    height_cm, weight_kg, chronic_conditions, risk_flags
+                )
+            except Exception as e:
+                logger.error(f"피처 추출 실패: {str(e)}", exc_info=True)
+                raise ServiceError(
+                    message="피처 추출 중 오류가 발생했습니다.",
+                    details={"error": str(e)}
+                )
 
             # 3️⃣ 규칙 기반 점수 계산 (0-1)
-            score_components = HealthScoreService._calculate_rule_based_score(
-                features, chronic_conditions, risk_flags
-            )
+            try:
+                score_components = HealthScoreService._calculate_rule_based_score(
+                    features, chronic_conditions, risk_flags
+                )
+            except Exception as e:
+                logger.error(f"규칙 기반 점수 계산 실패: {str(e)}", exc_info=True)
+                raise ServiceError(
+                    message="점수 계산 중 오류가 발생했습니다.",
+                    details={"error": str(e)}
+                )
 
             # 4️⃣ ML 모델 예측 (선택사항)
             ml_score = HealthScoreService._predict_with_ml_model(features)
 
             # 5️⃣ 앙상블 (규칙 70% + ML 30%)
-            final_score_normalized = (
-                0.7 * HealthScoreService._normalize_components(score_components) +
-                0.3 * ml_score
-            )
+            try:
+                final_score_normalized = (
+                    0.7 * HealthScoreService._normalize_components(score_components) +
+                    0.3 * ml_score
+                )
 
-            # 6️⃣ 0-100 범위로 변환
-            final_score = final_score_normalized * 100
-            final_score = max(0, min(100, final_score))  # 클립핑
+                # 6️⃣ 0-100 범위로 변환
+                final_score = final_score_normalized * 100
+                final_score = max(0, min(100, final_score))  # 클립핑
+            except Exception as e:
+                logger.error(f"점수 정규화 실패: {str(e)}", exc_info=True)
+                raise ServiceError(
+                    message="점수 정규화 중 오류가 발생했습니다.",
+                    details={"error": str(e)}
+                )
 
             # 7️⃣ 위험 수준 판정
-            risk_level = HealthScoreService._determine_risk_level(final_score)
+            try:
+                risk_level = HealthScoreService._determine_risk_level(final_score)
+            except Exception as e:
+                logger.error(f"위험 수준 판정 실패: {str(e)}", exc_info=True)
+                # 위험 수준 판정 실패는 기본값 사용
+                risk_level = RiskLevel.MEDIUM
 
             # 8️⃣ 권장사항 생성
-            recommendations = HealthScoreService._generate_recommendations(
-                final_score, chronic_conditions, risk_flags
-            )
+            try:
+                recommendations = HealthScoreService._generate_recommendations(
+                    final_score, chronic_conditions, risk_flags
+                )
+            except Exception as e:
+                logger.warning(f"권장사항 생성 실패: {str(e)}")
+                # 권장사항 생성 실패는 기본값 사용
+                recommendations = ["건강 상태를 확인해주세요."]
 
             logger.info(f"건강점수 계산 완료: score={final_score:.1f}, risk={risk_level}")
 
@@ -87,12 +130,16 @@ class HealthScoreService:
                 recommendations=recommendations
             )
 
-        except ValueError as e:
-            logger.error(f"입력 검증 실패: {str(e)}")
+        except (ValidationError, ServiceError):
+            # 커스텀 예외는 그대로 전달
             raise
         except Exception as e:
-            logger.error(f"건강점수 계산 실패: {str(e)}")
-            raise
+            # 예상치 못한 오류는 ServiceError로 변환
+            logger.error(f"건강점수 계산 중 예상치 못한 오류: {str(e)}", exc_info=True)
+            raise ServiceError(
+                message="건강점수 계산 중 오류가 발생했습니다.",
+                details={"error_type": type(e).__name__, "error_message": str(e)}
+            )
 
     @staticmethod
     def _calculate_rule_based_score(
@@ -123,19 +170,33 @@ class HealthScoreService:
 
         try:
             model = get_health_model()
+            
+            if model is None:
+                logger.debug("ML 모델이 없습니다. 기본값을 사용합니다.")
+                return 0.5  # 기본값으로 폴백
 
             # 피처를 배열로 변환
-            feature_vector = np.array([
-                features.get("bmi_factor", 0.5),
-                features.get("chronic_factor", 0.8),
-                features.get("mobility_factor", 0.9),
-                features.get("cognitive_factor", 0.9)
-            ]).reshape(1, -1)
+            try:
+                feature_vector = np.array([
+                    features.get("bmi_factor", 0.5),
+                    features.get("chronic_factor", 0.8),
+                    features.get("mobility_factor", 0.9),
+                    features.get("cognitive_factor", 0.9)
+                ]).reshape(1, -1)
+            except Exception as e:
+                logger.warning(f"피처 벡터 생성 실패: {str(e)}")
+                return 0.5  # 기본값으로 폴백
 
             # 모델 예측
-            prediction = model.predict(feature_vector)[0]
-
-            return float(prediction)
+            try:
+                prediction = model.predict(feature_vector)[0]
+                return float(prediction)
+            except AttributeError as e:
+                logger.warning(f"모델에 predict 메서드가 없습니다: {str(e)}")
+                return 0.5  # 기본값으로 폴백
+            except Exception as e:
+                logger.warning(f"모델 예측 실행 실패: {str(e)}")
+                return 0.5  # 기본값으로 폴백
 
         except Exception as e:
             logger.warning(f"ML 모델 예측 실패 (규칙 기반으로 진행): {str(e)}")
