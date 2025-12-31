@@ -1,14 +1,20 @@
+"""
+Baseline 모델용 학습 데이터 생성
+"""
 import pandas as pd
+from pathlib import Path
 
-# Digital Gap 정제 데이터 로드
-digital = pd.read_csv(
-    "data/01_feature_source/Digital_Gap_Matching/digital_clean.csv"
-)
+base_dir = Path(__file__).parent.parent.parent
+input_path = base_dir / "data" / "01_feature_source" / "Digital_Gap_Matching" / "digital_clean.csv"
+output_path = base_dir / "data" / "03_baseline_model" / "train_data.csv"
 
-# Baseline에서는 일단 그대로 학습 데이터로 사용
-digital.to_csv(
-    "data/03_baseline_model/train_data.csv",
-    index=False
-)
+if not input_path.exists():
+    raise FileNotFoundError(f"입력 파일을 찾을 수 없습니다: {input_path}")
 
-print("train_data.csv 생성 완료")
+digital = pd.read_csv(input_path, encoding="utf-8-sig")
+
+output_path.parent.mkdir(parents=True, exist_ok=True)
+digital.to_csv(output_path, index=False, encoding="utf-8-sig")
+
+print(f"✅ train_data.csv 생성 완료 ({len(digital)}행)")
+print(f"저장 위치: {output_path}")
