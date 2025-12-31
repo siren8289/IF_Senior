@@ -1,7 +1,7 @@
 
 openapi: 3.0.0
 info:
-  title: S-Linker API
+  title: IF(이프) API
   description: AI 기반 시니어 케어 워커 매칭 플랫폼 API
   version: 1.0.0
   contact:

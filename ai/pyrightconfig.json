@@ -1,0 +1,19 @@
+{
+    "venvPath": "/Users/m/IF/ai",
+    "venv": "venv",
+    "pythonVersion": "3.13",
+    "pythonPlatform": "Darwin",
+    "pythonPath": "/Users/m/IF/ai/venv/bin/python",
+    "executionEnvironments": [
+        {
+            "root": "/Users/m/IF/ai",
+            "pythonVersion": "3.13",
+            "pythonPlatform": "Darwin",
+            "pythonPath": "/Users/m/IF/ai/venv/bin/python",
+            "extraPaths": [
+                "/Users/m/IF/ai",
+                "/Users/m/IF/ai/venv/lib/python3.13/site-packages"
+            ]
+        }
+    ]
+}
