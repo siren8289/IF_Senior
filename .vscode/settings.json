@@ -1,0 +1,12 @@
+{
+    "python.defaultInterpreterPath": "/Users/m/IF/ai/venv/bin/python",
+    "python.pythonPath": "/Users/m/IF/ai/venv/bin/python",
+    "python.analysis.extraPaths": [
+        "/Users/m/IF/ai",
+        "/Users/m/IF/ai/venv/lib/python3.13/site-packages"
+    ],
+    "python.analysis.autoImportCompletions": true,
+    "python.languageServer": "None",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticMode": "workspace"
+}
