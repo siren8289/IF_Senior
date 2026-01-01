@@ -1,15 +1,15 @@
 import logging
-from typing import List
+from typing import List, Dict
 from schemas.job_risk import JobRiskResponse, RiskLevelEnum
 from features.job_risk_features import JobRiskFeatureExtractor
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("services.job_risk")
+logger.setLevel(logging.INFO)
 
 class JobRiskService:
     """일자리 위험도 계산 서비스"""
 
-    # 가중치
-    WEIGHTS = {
+    WEIGHTS: Dict[str, float] = {
         "text_risk": 0.40,
         "physical_load": 0.35,
         "health_level_factor": 0.20,
@@ -24,9 +24,8 @@ class JobRiskService:
         estimated_minutes: int,
         required_health_level: int
     ) -> JobRiskResponse:
-        """일자리 위험도 계산"""
 
-        logger.info(f"일자리 위험도 계산: job_id={job_id}")
+        logger.info(f"[JobRisk] 요청 | job_id={job_id}")
 
         try:
             # 1️⃣ 피처 추출
@@ -34,22 +33,34 @@ class JobRiskService:
                 title, description, estimated_minutes, required_health_level
             )
 
-            # 2️⃣ 가중평균 계산
-            risk_score = sum(
-                features[key] * JobRiskService.WEIGHTS.get(key, 0.0)
-                for key in features.keys()
-            )
+            logger.debug(f"[JobRisk] 추출된 피처 = {features}")
 
-            # 3️⃣ 0-10 범위로 정규화
+            # 2️⃣ 점수 계산
+            risk_score = 0.0
+            for key, weight in JobRiskService.WEIGHTS.items():
+                value = features.get(key, 0.0)
+                contribution = value * weight
+                risk_score += contribution
+                logger.debug(
+                    f"[JobRisk][calc] {key} value={value:.2f}, "
+                    f"weight={weight}, contribution={contribution:.2f}"
+                )
+
+            # 3️⃣ 0~10 정규화
             risk_score = min(10.0, max(0.0, risk_score))
 
-            # 4️⃣ 위험 수준 판정
+            # 4️⃣ 위험 수준
             risk_level = JobRiskService._determine_risk_level(risk_score)
 
-            # 5️⃣ 위험 요소 추출
+            # 5️⃣ 위험 요소
             risk_factors = JobRiskService._extract_risk_factors(features, risk_score)
 
-            logger.info(f"위험도 계산 완료: score={risk_score:.1f}, level={risk_level}")
+            # ✅ 최종 요약 로그 (INFO — 깔끔하게 1줄)
+            logger.info(
+                f"[JobRisk] 완료 | job_id={job_id} | "
+                f"score={risk_score:.1f}, level={risk_level}, "
+                f"factors={len(risk_factors)}개"
+            )
 
             return JobRiskResponse(
                 job_id=job_id,
@@ -58,13 +69,12 @@ class JobRiskService:
                 risk_factors=risk_factors
             )
 
-        except Exception as e:
-            logger.error(f"위험도 계산 실패: {str(e)}")
+        except Exception:
+            logger.exception(f"[JobRisk] 💥 위험도 계산 실패 | job_id={job_id}")
             raise
 
     @staticmethod
     def _determine_risk_level(score: float) -> RiskLevelEnum:
-        """위험도 점수 → 수준"""
         if score >= 8:
             return RiskLevelEnum.CRITICAL
         elif score >= 6:
@@ -76,20 +86,15 @@ class JobRiskService:
 
     @staticmethod
     def _extract_risk_factors(features: dict, total_score: float) -> List[str]:
-        """주요 위험 요소 추출"""
-
         factors = []
 
-        if features["text_risk"] > 5:
+        if features.get("text_risk", 0) > 5:
             factors.append(f"위험한 작업 내용 ({features['text_risk']:.0f}점)")
-
-        if features["physical_load"] > 6:
+        if features.get("physical_load", 0) > 6:
             factors.append(f"신체 활동 많음 ({features['physical_load']:.0f}점)")
-
-        if features["health_level_factor"] > 8:
+        if features.get("health_level_factor", 0) > 8:
             factors.append(f"높은 건강 요구 ({features['health_level_factor']:.0f}점)")
-
-        if features["duration_factor"] > 7:
+        if features.get("duration_factor", 0) > 7:
             factors.append(f"장시간 업무 ({features['duration_factor']:.0f}점)")
 
-        return factors[:5]  # 최대 5개
+        return factors[:5]

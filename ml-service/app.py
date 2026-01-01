@@ -1,6 +1,13 @@
 from fastapi import FastAPI
 from api.v1 import job_risk, matching
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,  # INFO 이상 다 보이게
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
 app = FastAPI(
     title="Senior ML Service",
     version="1.0.0",
