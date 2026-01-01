@@ -1,19 +1,19 @@
 import logging
 import numpy as np
-from typing import List, Dict, Tuple
-from datetime import datetime
+from typing import List, Dict
 
 from schemas.monitoring import (
     AnomalyDetectionRequest,
     AnomalyDetectionResponse,
     DetectedAnomaly,
     AlertLevel,
-    AnomalySeverity
+    AnomalySeverity,
 )
 from features.monitoring_features import MonitoringFeatureExtractor
-from models.loader import get_lstm_model, get_isolation_forest
+from models.loader import get_isolation_forest, get_lstm_model
 
 logger = logging.getLogger(__name__)
+
 
 class AnomalyDetectionService:
     """센서 데이터 이상 탐지 서비스"""
@@ -22,157 +22,155 @@ class AnomalyDetectionService:
     def detect_anomalies(
         request: AnomalyDetectionRequest
     ) -> AnomalyDetectionResponse:
-        """
-        종합 이상 탐지 (앙상블)
-
-        알고리즘:
-        1. 통계적 이상점 탐지
-        2. LSTM 기반 패턴 이상
-        3. Isolation Forest 앙상블
-        4. 비즈니스 규칙 (낙상 등)
-        5. 최종 점수 계산
-        """
 
         logger.info(f"이상 탐지 시작: senior_id={request.senior_profile_id}")
 
-        try:
-            # 1️⃣ 데이터 준비
-            readings_dict = [r.dict() for r in request.sensor_readings]
+        # --------------------------------------------------
+        # 입력 데이터 정리
+        # --------------------------------------------------
+        readings: List[Dict] = [r.dict() for r in request.sensor_readings]
 
-            # 2️⃣ 통계적 이상점 탐지
-            statistical_anomalies = AnomalyDetectionService._detect_statistical_anomalies(
-                readings_dict
-            )
+        detected_anomalies: List[DetectedAnomaly] = []
 
-            # 3️⃣ LSTM 기반 탐지
-            lstm_anomalies = AnomalyDetectionService._detect_lstm_anomalies(
-                readings_dict
-            )
+        # --------------------------------------------------
+        # 1️⃣ 통계 기반 이상 탐지
+        # --------------------------------------------------
+        detected_anomalies.extend(
+            AnomalyDetectionService._detect_statistical_anomalies(readings)
+        )
 
-            # 4️⃣ Isolation Forest 탐지
-            if_anomalies = AnomalyDetectionService._detect_isolation_forest_anomalies(
-                readings_dict
-            )
+        # --------------------------------------------------
+        # 2️⃣ Isolation Forest (⭐ 핵심 ML)
+        # --------------------------------------------------
+        detected_anomalies.extend(
+            AnomalyDetectionService._detect_isolation_forest_anomalies(readings)
+        )
 
-            # 5️⃣ 비즈니스 규칙 (낙상, 심박수 이상 등)
-            rule_based_anomalies = AnomalyDetectionService._detect_rule_based_anomalies(
-                readings_dict
-            )
+        # --------------------------------------------------
+        # 3️⃣ LSTM (선택적, 실패 허용)
+        # --------------------------------------------------
+        detected_anomalies.extend(
+            AnomalyDetectionService._detect_lstm_anomalies(readings)
+        )
 
-            # 6️⃣ 앙상블 (투표)
-            all_anomalies = statistical_anomalies + lstm_anomalies + if_anomalies + rule_based_anomalies
-            detected_anomalies = AnomalyDetectionService._merge_anomalies(all_anomalies)
+        # --------------------------------------------------
+        # 4️⃣ 규칙 기반 (낙상, 위험 심박)
+        # --------------------------------------------------
+        detected_anomalies.extend(
+            AnomalyDetectionService._detect_rule_based_anomalies(readings)
+        )
 
-            # 7️⃣ 최종 점수
-            anomaly_score = AnomalyDetectionService._calculate_final_score(
-                detected_anomalies, len(readings_dict)
-            )
+        # --------------------------------------------------
+        # 후처리
+        # --------------------------------------------------
+        detected_anomalies = AnomalyDetectionService._merge_anomalies(
+            detected_anomalies
+        )
 
-            # 8️⃣ 경고 수준
-            alert_level = AnomalyDetectionService._determine_alert_level(anomaly_score, detected_anomalies)
+        anomaly_score = AnomalyDetectionService._calculate_final_score(
+            detected_anomalies, len(readings)
+        )
 
-            # 9️⃣ 권장사항
-            recommendations = AnomalyDetectionService._generate_recommendations(detected_anomalies)
+        alert_level = AnomalyDetectionService._determine_alert_level(
+            anomaly_score, detected_anomalies
+        )
 
-            logger.info(f"이상 탐지 완료: score={anomaly_score:.2f}, level={alert_level}")
+        recommendations = AnomalyDetectionService._generate_recommendations(
+            detected_anomalies
+        )
 
-            return AnomalyDetectionResponse(
-                senior_profile_id=request.senior_profile_id,
-                matching_id=request.matching_id,
-                anomalies_detected=len(detected_anomalies) > 0,
-                anomaly_score=round(anomaly_score, 2),
-                alert_level=alert_level,
-                detected_anomalies=detected_anomalies,
-                recommendations=recommendations
-            )
+        logger.info(
+            f"이상 탐지 완료: score={anomaly_score:.2f}, level={alert_level}"
+        )
 
-        except Exception as e:
-            logger.error(f"이상 탐지 실패: {str(e)}")
-            raise
+        return AnomalyDetectionResponse(
+            senior_profile_id=request.senior_profile_id,
+            matching_id=request.matching_id,
+            anomalies_detected=len(detected_anomalies) > 0,
+            anomaly_score=round(anomaly_score, 2),
+            alert_level=alert_level,
+            detected_anomalies=detected_anomalies,
+            recommendations=recommendations,
+        )
 
+    # =====================================================
+    # 통계 기반 이상 탐지
+    # =====================================================
     @staticmethod
-    def _detect_statistical_anomalies(readings: List[Dict]) -> List[DetectedAnomaly]:
-        """통계적 이상점 탐지"""
+    def _detect_statistical_anomalies(
+        readings: List[Dict],
+    ) -> List[DetectedAnomaly]:
 
-        anomalies = []
+        anomalies: List[DetectedAnomaly] = []
 
-        # 심박수 이상
-        heart_rates = [r["heart_rate"] for r in readings if r.get("heart_rate")]
-        if heart_rates:
-            outlier_indices = MonitoringFeatureExtractor.detect_outliers_statistical(heart_rates)
+        heart_rates = [
+            r["heart_rate"]
+            for r in readings
+            if r.get("heart_rate") is not None
+        ]
 
-            for idx in outlier_indices:
-                reading = readings[idx]
-                anomalies.append(DetectedAnomaly(
-                    timestamp=reading["timestamp"],
+        if not heart_rates:
+            return anomalies
+
+        indices = MonitoringFeatureExtractor.detect_outliers_statistical(heart_rates)
+
+        for idx in indices:
+            r = readings[idx]
+            anomalies.append(
+                DetectedAnomaly(
+                    timestamp=r["timestamp"],
                     type="heart_rate_spike",
-                    value=reading["heart_rate"],
+                    value=r["heart_rate"],
                     normal_range=[60, 85],
-                    severity=AnomalySeverity.MEDIUM
-                ))
+                    severity=AnomalySeverity.MEDIUM,
+                )
+            )
 
         return anomalies
 
+    # =====================================================
+    # ⭐ Isolation Forest (10개 피처 고정)
+    # =====================================================
     @staticmethod
-    def _detect_lstm_anomalies(readings: List[Dict]) -> List[DetectedAnomaly]:
-        """LSTM 기반 시계열 패턴 이상"""
-
-        try:
-            model = get_lstm_model()
-
-            # 심박수 시계열
-            heart_rates = np.array([r["heart_rate"] for r in readings if r.get("heart_rate")])
-
-            if len(heart_rates) < 10:
-                return []
-
-            # LSTM 재구성 오차
-            reconstructed = model.predict(heart_rates.reshape(-1, 1))
-            errors = np.abs(heart_rates - reconstructed.flatten())
-
-            # 높은 오차 = 이상
-            threshold = np.mean(errors) + 2 * np.std(errors)
-            anomaly_indices = np.where(errors > threshold)[0]
-
-            anomalies = []
-            for idx in anomaly_indices:
-                reading = readings[idx]
-                anomalies.append(DetectedAnomaly(
-                    timestamp=reading["timestamp"],
-                    type="lstm_anomaly",
-                    value=reading["heart_rate"],
-                    normal_range=[60, 85],
-                    severity=AnomalySeverity.LOW
-                ))
-
-            return anomalies
-
-        except Exception as e:
-            logger.warning(f"LSTM 탐지 실패: {str(e)}")
-            return []
-
-    @staticmethod
-    def _detect_isolation_forest_anomalies(readings: List[Dict]) -> List[DetectedAnomaly]:
-        """Isolation Forest 앙상블"""
+    def _detect_isolation_forest_anomalies(
+        readings: List[Dict],
+    ) -> List[DetectedAnomaly]:
 
         try:
             model = get_isolation_forest()
+            if model is None:
+                return []
 
-            # 피처 추출
-            features = MonitoringFeatureExtractor.extract_time_series_features(readings)
+            # 1️⃣ 시계열 → 피처 dict
+            features = MonitoringFeatureExtractor.extract_time_series_features(
+                readings
+            )
 
-            # 예측
-            scores = model.score_samples(np.array(list(features.values())).reshape(1, -1))
+            # 2️⃣ ⭐ 고정된 입력 벡터 (10개)
+            vector = MonitoringFeatureExtractor.to_model_input(features)
 
-            # scores < -0.5 = 이상
-            if scores[0] < -0.5:
-                return [DetectedAnomaly(
-                    timestamp=readings[-1]["timestamp"],
-                    type="ensemble_anomaly",
-                    value=float(scores[0]),
-                    normal_range=[-1.0, -0.5],
-                    severity=AnomalySeverity.MEDIUM
-                )]
+            # 🔍 디버그 확인용 (문제 해결 후 제거 가능)
+            logger.warning(
+                f"[DEBUG] Isolation Forest input dim = {len(vector)}"
+            )
+
+            # 3️⃣ sklearn 입력 형태
+            X = np.array(vector).reshape(1, -1)
+
+            # 4️⃣ anomaly score
+            score = float(model.decision_function(X)[0])
+
+            # 경험적 기준
+            if score < -0.5:
+                return [
+                    DetectedAnomaly(
+                        timestamp=readings[-1]["timestamp"],
+                        type="isolation_forest_anomaly",
+                        value=score,
+                        normal_range=[-0.5, 1.0],
+                        severity=AnomalySeverity.MEDIUM,
+                    )
+                ]
 
             return []
 
@@ -180,115 +178,159 @@ class AnomalyDetectionService:
             logger.warning(f"Isolation Forest 탐지 실패: {str(e)}")
             return []
 
+    # =====================================================
+    # LSTM (선택적)
+    # =====================================================
     @staticmethod
-    def _detect_rule_based_anomalies(readings: List[Dict]) -> List[DetectedAnomaly]:
-        """비즈니스 규칙 기반 탐지"""
+    def _detect_lstm_anomalies(
+        readings: List[Dict],
+    ) -> List[DetectedAnomaly]:
 
-        anomalies = []
+        try:
+            model = get_lstm_model()
+            if model is None:
+                return []
 
-        # 낙상 탐지
-        for i, reading in enumerate(readings):
-            if MonitoringFeatureExtractor.detect_fall(
-                reading.get("posture"),
-                reading["activity"]
-            ):
-                anomalies.append(DetectedAnomaly(
-                    timestamp=reading["timestamp"],
-                    type="fall_detected",
-                    value=reading["posture"]["angle"],
-                    normal_range=[80, 100],
-                    severity=AnomalySeverity.HIGH
-                ))
+            heart_rates = np.array(
+                [
+                    r["heart_rate"]
+                    for r in readings
+                    if r.get("heart_rate") is not None
+                ]
+            )
 
-        # 극단적 심박수
-        for i, reading in enumerate(readings):
-            if reading.get("heart_rate"):
-                if reading["heart_rate"] > 150:
-                    anomalies.append(DetectedAnomaly(
-                        timestamp=reading["timestamp"],
-                        type="high_heart_rate_critical",
-                        value=reading["heart_rate"],
+            if len(heart_rates) < 10:
+                return []
+
+            reconstructed = model.predict(heart_rates.reshape(-1, 1))
+            errors = np.abs(heart_rates - reconstructed.flatten())
+
+            threshold = np.mean(errors) + 2 * np.std(errors)
+            indices = np.where(errors > threshold)[0]
+
+            anomalies: List[DetectedAnomaly] = []
+
+            for idx in indices:
+                r = readings[idx]
+                anomalies.append(
+                    DetectedAnomaly(
+                        timestamp=r["timestamp"],
+                        type="lstm_anomaly",
+                        value=r["heart_rate"],
                         normal_range=[60, 85],
-                        severity=AnomalySeverity.HIGH
-                    ))
+                        severity=AnomalySeverity.LOW,
+                    )
+                )
+
+            return anomalies
+
+        except Exception as e:
+            logger.warning(f"LSTM 탐지 실패: {str(e)}")
+            return []
+
+    # =====================================================
+    # 규칙 기반
+    # =====================================================
+    @staticmethod
+    def _detect_rule_based_anomalies(
+        readings: List[Dict],
+    ) -> List[DetectedAnomaly]:
+
+        anomalies: List[DetectedAnomaly] = []
+
+        for r in readings:
+            # 낙상
+            if MonitoringFeatureExtractor.detect_fall(
+                r.get("posture"), r.get("activity")
+            ):
+                anomalies.append(
+                    DetectedAnomaly(
+                        timestamp=r["timestamp"],
+                        type="fall_detected",
+                        value=r["posture"]["angle"],
+                        normal_range=[80, 100],
+                        severity=AnomalySeverity.HIGH,
+                    )
+                )
+
+            # 치명적 심박
+            if r.get("heart_rate") and r["heart_rate"] > 150:
+                anomalies.append(
+                    DetectedAnomaly(
+                        timestamp=r["timestamp"],
+                        type="high_heart_rate_critical",
+                        value=r["heart_rate"],
+                        normal_range=[60, 85],
+                        severity=AnomalySeverity.HIGH,
+                    )
+                )
 
         return anomalies
 
+    # =====================================================
+    # 후처리 로직
+    # =====================================================
     @staticmethod
-    def _merge_anomalies(anomalies: List[DetectedAnomaly]) -> List[DetectedAnomaly]:
-        """중복 이상점 병합"""
+    def _merge_anomalies(
+        anomalies: List[DetectedAnomaly],
+    ) -> List[DetectedAnomaly]:
 
-        # 타임스탬프 기준 그룹화
         merged = {}
-        for anomaly in anomalies:
-            key = anomaly.timestamp.isoformat()
-            if key not in merged:
-                merged[key] = anomaly
-            else:
-                # 더 심각한 것으로 덮어쓰기
-                if anomaly.severity.value > merged[key].severity.value:
-                    merged[key] = anomaly
+
+        for a in anomalies:
+            key = (a.timestamp, a.type)
+            if key not in merged or a.severity.value > merged[key].severity.value:
+                merged[key] = a
 
         return list(merged.values())
 
     @staticmethod
     def _calculate_final_score(
         anomalies: List[DetectedAnomaly],
-        total_readings: int
+        total_readings: int,
     ) -> float:
-        """최종 이상도 점수 (0-1)"""
 
         if not anomalies:
             return 0.0
 
-        # 심각도 가중치
-        severity_weights = {
+        weights = {
             AnomalySeverity.LOW: 0.2,
             AnomalySeverity.MEDIUM: 0.5,
-            AnomalySeverity.HIGH: 1.0
+            AnomalySeverity.HIGH: 1.0,
         }
 
-        total_score = sum(severity_weights.get(a.severity, 0.0) for a in anomalies)
-
-        # 정규화
-        score = min(1.0, total_score / (total_readings / 10))
-
-        return score
+        raw_score = sum(weights[a.severity] for a in anomalies)
+        return min(1.0, raw_score / max(1, total_readings / 10))
 
     @staticmethod
     def _determine_alert_level(
         score: float,
-        anomalies: List[DetectedAnomaly]
+        anomalies: List[DetectedAnomaly],
     ) -> AlertLevel:
-        """경고 수준 결정"""
 
-        # 심각한 이상 있으면 CRITICAL
         if any(a.severity == AnomalySeverity.HIGH for a in anomalies):
             return AlertLevel.CRITICAL
-
-        # 점수 기반
         if score > 0.7:
             return AlertLevel.CRITICAL
-        elif score > 0.4:
+        if score > 0.4:
             return AlertLevel.WARNING
-        else:
-            return AlertLevel.INFO
+        return AlertLevel.INFO
 
     @staticmethod
-    def _generate_recommendations(anomalies: List[DetectedAnomaly]) -> List[str]:
-        """권장사항 생성"""
+    def _generate_recommendations(
+        anomalies: List[DetectedAnomaly],
+    ) -> List[str]:
 
-        recommendations = []
+        recs = []
 
-        for anomaly in anomalies:
-            if anomaly.type == "fall_detected":
-                recommendations.append("즉시 도움 필요 (낙상 감지)")
-            elif anomaly.type == "high_heart_rate_critical":
-                recommendations.append("휴식 후 병원 방문 권장")
-            elif anomaly.type == "heart_rate_spike":
-                recommendations.append("쉬게 해주세요")
-                recommendations.append("수분 섭취 확인")
-            elif anomaly.type == "lstm_anomaly":
-                recommendations.append("비정상적인 패턴 감지")
+        for a in anomalies:
+            if a.type == "fall_detected":
+                recs.append("즉시 보호자 및 응급 대응이 필요합니다.")
+            elif a.type == "high_heart_rate_critical":
+                recs.append("휴식 후 병원 방문을 권장합니다.")
+            elif a.type == "heart_rate_spike":
+                recs.append("휴식 및 수분 섭취를 권장합니다.")
+            elif a.type == "lstm_anomaly":
+                recs.append("비정상 패턴 지속 관찰이 필요합니다.")
 
-        return list(set(recommendations))[:5]  # 중복 제거, 최대 5개
+        return list(set(recs))[:5]
