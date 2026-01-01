@@ -19,3 +19,11 @@ embeddings/
 
 # OS
 .DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# 기타
+__pycache__/
+*.pyc
